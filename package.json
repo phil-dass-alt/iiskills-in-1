@@ -1,0 +1,28 @@
+{
+  "name": "iiskills-in",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "yarn@4.12.0",
+  "description": "iiskills.in — clean-slate rebuild for Skilling India",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "prettier": "^3.4.2",
+    "tailwindcss": "^3.4.0",
+    "turbo": "latest",
+    "typescript": "^5.0.0"
+  }
+}
