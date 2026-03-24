@@ -1,0 +1,147 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy — build on GitHub, then SSH to VPS and do a zero-downtime PM2 reload.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   VPS_HOST                  — IP or hostname of the VPS
+#   VPS_USER                  — SSH username (e.g. deploy)
+#   VPS_SSH_KEY               — Private key for SSH auth (no passphrase)
+#   VPS_DEPLOY_PATH           — Absolute path on VPS (e.g. /srv/iiskills-in)
+#   NEXT_PUBLIC_SUPABASE_URL  — Supabase project URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY — Supabase anon key
+# ─────────────────────────────────────────────────────────────────────────────
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: "Git SHA to roll back to (leave empty for latest)"
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never cancel a running deploy
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.rollback_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Cache Yarn install state
+        uses: actions/cache@v4
+        with:
+          path: |
+            .yarn/cache
+            .yarn/install-state.gz
+          key: yarn-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-
+
+      - name: Install dependencies (immutable)
+        run: yarn install --immutable
+
+      - name: Build all apps
+        run: yarn build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SITE_URL: https://iiskills.in
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+
+      # Next.js standalone output requires public/ and .next/static/ to be
+      # copied into the standalone directory manually after build.
+      - name: Copy static assets into standalone directories
+        run: |
+          for APP in main learn-ai learn-chemistry learn-developer learn-geography \
+                     learn-management learn-math learn-physics learn-pr learn-apt web; do
+            STANDALONE="apps/${APP}/.next/standalone"
+            if [ -d "$STANDALONE" ]; then
+              cp -r "apps/${APP}/.next/static" "${STANDALONE}/.next/static"
+              if [ -d "apps/${APP}/public" ]; then
+                cp -r "apps/${APP}/public" "${STANDALONE}/public"
+              fi
+            fi
+          done
+
+      # ── SSH deploy ─────────────────────────────────────────────────────────
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Rsync build to VPS
+        run: |
+          DEPLOY_PATH="${{ secrets.VPS_DEPLOY_PATH }}"
+          # Sync source (minus node_modules/.next) then sync .next standalone builds
+          rsync -az --delete \
+            --exclude='.next' \
+            --exclude='node_modules' \
+            --exclude='.env*' \
+            ./ "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${DEPLOY_PATH}/"
+
+          # Sync each app's .next/standalone and .next/static
+          for APP in main learn-ai learn-chemistry learn-developer learn-geography \
+                     learn-management learn-math learn-physics learn-pr learn-apt web; do
+            rsync -az --delete \
+              "apps/${APP}/.next/" \
+              "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${DEPLOY_PATH}/apps/${APP}/.next/"
+          done
+
+      - name: Reload apps with PM2 (zero-downtime)
+        run: |
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" bash <<'ENDSSH'
+            set -e
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+            # Reload all processes defined in ecosystem.config.js gracefully.
+            # pm2 reload sends SIGINT, waits for graceful shutdown, then spawns new.
+            pm2 reload ecosystem.config.js --update-env
+            pm2 save
+          ENDSSH
+
+      - name: Smoke test — check HTTP 200 for main site
+        run: |
+          sleep 10
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" https://iiskills.in)
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke test FAILED — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Smoke test passed — HTTP $STATUS"
+
+      # ── Rollback on failure ────────────────────────────────────────────────
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Deploy or smoke test failed — rolling back PM2 to previous version"
+          ssh "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" bash <<'ENDSSH'
+            set -e
+            cd "${{ secrets.VPS_DEPLOY_PATH }}"
+            pm2 reload ecosystem.config.js
+          ENDSSH
+        continue-on-error: true
