@@ -73,6 +73,26 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── Footer ───────────────────────────────────────────────── */}
+      <footer className="border-t border-slate-200 bg-white py-8 px-8 text-center text-sm text-charcoal/50">
+        <p className="mb-2">
+          Questions? Write to us at{' '}
+          <a
+            href="mailto:support@iiskills.in"
+            className="text-accent hover:underline"
+          >
+            support@iiskills.in
+          </a>
+        </p>
+        <p>
+          <a href="/terms" className="hover:text-accent transition-colors">
+            Terms &amp; Conditions
+          </a>
+          {' · '}
+          <span>&copy; {new Date().getFullYear()} iiskills. All rights reserved.</span>
+        </p>
+      </footer>
+
     </main>
   );
 }
