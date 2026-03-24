@@ -1,5 +1,5 @@
 import { getLessonsByCourse } from '@iiskills/content';
-import { LessonViewer } from '@/components/LessonViewer';
+import { LessonViewer } from '@iiskills/ui';
 
 interface AdminCoursePageProps {
   params: Promise<{ id: string }>;

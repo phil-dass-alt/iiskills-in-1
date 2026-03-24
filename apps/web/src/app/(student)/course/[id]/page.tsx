@@ -1,7 +1,6 @@
 import { AccessGuard } from '@iiskills/access';
 import { getLessonsByCourse } from '@iiskills/content';
-import { LessonViewer } from '@/components/LessonViewer';
-import { PaywallUI } from '@/components/PaywallUI';
+import { LessonViewer, PaywallUI } from '@iiskills/ui';
 
 interface StudentCoursePageProps {
   params: Promise<{ id: string }>;

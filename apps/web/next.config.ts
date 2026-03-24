@@ -1,25 +1,14 @@
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@iiskills/access', '@iiskills/content', '@iiskills/hooks'],
+  transpilePackages: ['@iiskills/access', '@iiskills/content', '@iiskills/hooks', '@iiskills/ui'],
 
   experimental: {
     serverActions: {
       // Only allow Server Actions from the iiskills.in origin family
       allowedOrigins: [
-        'iiskills.in',
-        'www.iiskills.in',
-        'learn-ai.iiskills.in',
-        'learn-developer.iiskills.in',
-        'learn-chemistry.iiskills.in',
-        'learn-math.iiskills.in',
-        'learn-physics.iiskills.in',
-        'learn-geography.iiskills.in',
-        'learn-management.iiskills.in',
-        'learn-pr.iiskills.in',
-        // Local development
-        'localhost:3000',
-        'localhost:3001',
+        'admin.iiskills.in',
+        'localhost:3040',
       ],
     },
   },

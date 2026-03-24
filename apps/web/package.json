@@ -4,9 +4,9 @@
   "private": true,
   "homepage": "https://iiskills.in",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 3040",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --port 3040",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
@@ -14,6 +14,7 @@
     "@iiskills/access": "*",
     "@iiskills/content": "*",
     "@iiskills/hooks": "*",
+    "@iiskills/ui": "*",
     "next": "^15.1.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
