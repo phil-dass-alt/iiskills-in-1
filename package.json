@@ -2,6 +2,7 @@
   "name": "iiskills-in",
   "version": "0.0.0",
   "private": true,
+  "homepage": "https://iiskills.in",
   "packageManager": "yarn@4.12.0",
   "description": "iiskills.in — clean-slate rebuild for Skilling India",
   "workspaces": [

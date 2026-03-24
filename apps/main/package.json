@@ -1,7 +1,8 @@
 {
-  "name": "main",
+  "name": "@iiskills/main",
   "version": "0.0.0",
   "private": true,
+  "homepage": "https://iiskills.in",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
