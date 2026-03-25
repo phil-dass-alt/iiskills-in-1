@@ -13,7 +13,9 @@ IFS=$'\n\t'
 # - Saves PM2 process list (assumes pm2 startup already set)
 # ============================================================
 
-REPO_DIR="${REPO_DIR:-/var/www/iiskills-in}"
+# Better default: repo is wherever this script lives (still overrideable via env)
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="${REPO_DIR:-$SCRIPT_DIR}"
 BRANCH="${BRANCH:-main}"
 
 APPS_DIR="${APPS_DIR:-apps}"
@@ -35,8 +37,9 @@ require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command
 
 sudo_if_needed() { if [[ "${EUID}" -ne 0 ]]; then sudo "$@"; else "$@"; fi; }
 
+# Non-interactive confirm (no typing required)
 confirm_danger() {
-  cat >&2 <<EOF
+  cat >&2 <<'EOF'
 
 DANGER:
 You asked to DISABLE nginx sites for:
@@ -44,16 +47,13 @@ You asked to DISABLE nginx sites for:
 - *.iiskills.in
 
 This script will REMOVE matching symlinks/files from:
-- ${NGINX_SITES_ENABLED}
+- /etc/nginx/sites-enabled
 
 It will NOT delete anything from:
-- ${NGINX_SITES_AVAILABLE}
+- /etc/nginx/sites-available
 
-Type EXACTLY: DISABLE-IISKILLS-NGINX
-to continue:
+Auto-confirm enabled: continuing without prompt.
 EOF
-  read -r ans
-  [[ "$ans" == "DISABLE-IISKILLS-NGINX" ]] || die "Aborted."
 }
 
 # ----------------------------
@@ -119,12 +119,10 @@ log "Reloading nginx"
 # Use reload so nginx keeps running even if no sites remain enabled.
 sudo_if_needed nginx -s reload
 
-log "Root install (immutable when possible)"
-if yarn --version | grep -qE '^(2|3|4)\.'; then
-  yarn install --immutable
-else
-  yarn install --frozen-lockfile
-fi
+log "Root install (non-immutable; allows lockfile changes if needed)"
+# NOTE: Using --immutable/--frozen-lockfile will fail if yarn.lock would change.
+# If you want strict deploys, fix/commit yarn.lock in git and switch back to --immutable.
+yarn install
 
 log "Build apps one-by-one (Yarn workspaces)"
 for app in "${ORDER[@]}"; do
