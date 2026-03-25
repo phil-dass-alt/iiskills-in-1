@@ -3,22 +3,14 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # ============================================================
-# iiskills.in VPS deploy (monorepo apps/*) + PM2 + nginx
-# - Stops PM2 apps
-# - Deletes nginx site configs for iiskills.in and *.iiskills.in (AS REQUESTED)
+# iiskills.in VPS deploy (Yarn workspaces monorepo apps/*) + PM2 + nginx
+# - Updates repo
+# - Stops PM2 apps (best-effort)
+# - DISABLES nginx sites for iiskills.in by removing symlinks from sites-enabled ONLY
 # - Yarn install at repo root
-# - Builds apps one-by-one
+# - Builds apps via yarn workspaces (from repo root)
 # - Starts PM2 apps one-by-one on fixed ports
-#
-# Assumptions:
-# - repo at /var/www/iiskills-in (override with REPO_DIR)
-# - apps are at iiskills-in/apps/<app>
-# - each app supports either:
-#     PORT=xxxx yarn start
-#   or:
-#     PORT=xxxx yarn start -p xxxx
-#   or:
-#     next start -p xxxx (typical Next.js)
+# - Saves PM2 process list (assumes pm2 startup already set)
 # ============================================================
 
 REPO_DIR="${REPO_DIR:-/var/www/iiskills-in}"
@@ -30,13 +22,11 @@ NGINX_SITES_AVAILABLE="${NGINX_SITES_AVAILABLE:-/etc/nginx/sites-available}"
 NGINX_SITES_ENABLED="${NGINX_SITES_ENABLED:-/etc/nginx/sites-enabled}"
 DOMAIN_ROOT="iiskills.in"
 
-# Node/yarn/pm2 config
 PM2_NAMESPACE="${PM2_NAMESPACE:-iiskills}"
 NODE_ENV="${NODE_ENV:-production}"
 
-# If your apps require other env vars, export them before running this script:
-# export DATABASE_URL=...
-# export NEXT_PUBLIC_...=...
+# If your workspaces are named like "@iiskills/main", "@iiskills/learn-math", etc:
+WORKSPACE_PREFIX="${WORKSPACE_PREFIX:-@iiskills}"
 
 log() { printf "\n[%s] %s\n" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -49,26 +39,26 @@ confirm_danger() {
   cat >&2 <<EOF
 
 DANGER:
-You asked to DELETE nginx site configs/symlinks for:
+You asked to DISABLE nginx sites for:
 - iiskills.in
 - *.iiskills.in
 
-This script will remove matching files from:
+This script will REMOVE matching symlinks/files from:
 - ${NGINX_SITES_ENABLED}
+
+It will NOT delete anything from:
 - ${NGINX_SITES_AVAILABLE}
 
-Type EXACTLY: DELETE-IISKILLS-NGINX
+Type EXACTLY: DISABLE-IISKILLS-NGINX
 to continue:
 EOF
   read -r ans
-  [[ "$ans" == "DELETE-IISKILLS-NGINX" ]] || die "Aborted."
+  [[ "$ans" == "DISABLE-IISKILLS-NGINX" ]] || die "Aborted."
 }
 
 # ----------------------------
-# App -> port map (from user)
+# App -> port map (learn-ai removed)
 # ----------------------------
-# All apps live under iiskills-in/apps/<name>
-# Adjust app folder names here if your actual directories differ.
 declare -A PORTS=(
   ["main"]="3000"
 
@@ -77,14 +67,12 @@ declare -A PORTS=(
   ["learn-geography"]="3011"
   ["learn-physics"]="3020"
   ["learn-pr"]="3021"
-  ["learn-ai"]="3024"
 
   ["learn-chemistry"]="3005"
   ["learn-apt"]="3002"
   ["learn-developer"]="3007"
 )
 
-# Build/start order (main first, then learn apps)
 ORDER=(
   "main"
   "learn-management"
@@ -92,7 +80,6 @@ ORDER=(
   "learn-geography"
   "learn-physics"
   "learn-pr"
-  "learn-ai"
   "learn-chemistry"
   "learn-apt"
   "learn-developer"
@@ -121,12 +108,16 @@ for app in "${ORDER[@]}"; do
   pm2 delete "${PM2_NAMESPACE}:${app}" >/dev/null 2>&1 || true
 done
 
-log "Deleting nginx sites for *${DOMAIN_ROOT} (as requested)"
+log "Disabling nginx sites for *${DOMAIN_ROOT} (remove from sites-enabled ONLY)"
+# Safer than matching everything: only remove entries in sites-enabled.
 sudo_if_needed bash -c "rm -f '${NGINX_SITES_ENABLED}'/*'${DOMAIN_ROOT}'* 2>/dev/null || true"
-sudo_if_needed bash -c "rm -f '${NGINX_SITES_AVAILABLE}'/*'${DOMAIN_ROOT}'* 2>/dev/null || true"
 
-log "nginx config test (after deletion)"
+log "nginx config test (after disabling sites)"
 sudo_if_needed nginx -t
+
+log "Reloading nginx"
+# Use reload so nginx keeps running even if no sites remain enabled.
+sudo_if_needed nginx -s reload
 
 log "Root install (immutable when possible)"
 if yarn --version | grep -qE '^(2|3|4)\.'; then
@@ -135,22 +126,12 @@ else
   yarn install --frozen-lockfile
 fi
 
-log "Build apps one-by-one"
+log "Build apps one-by-one (Yarn workspaces)"
 for app in "${ORDER[@]}"; do
-  app_dir="${REPO_DIR}/${APPS_DIR}/${app}"
-  [[ -d "${app_dir}" ]] || die "Missing app dir: ${app_dir}"
-
-  log "Building ${app} (dir: ${app_dir})"
-  pushd "${app_dir}" >/dev/null
-
-  # Build only if script exists
-  if yarn -s run | grep -qE '^  build$'; then
-    NODE_ENV="${NODE_ENV}" yarn build
-  else
-    die "No build script found in ${APPS_DIR}/${app}/package.json"
-  fi
-
-  popd >/dev/null
+  # Workspace name assumption: "${WORKSPACE_PREFIX}/${app}"
+  ws="${WORKSPACE_PREFIX}/${app}"
+  log "Building workspace ${ws}"
+  NODE_ENV="${NODE_ENV}" yarn workspace "${ws}" run build
 done
 
 log "Start PM2 apps one-by-one with fixed ports"
@@ -161,14 +142,20 @@ for app in "${ORDER[@]}"; do
   app_dir="${REPO_DIR}/${APPS_DIR}/${app}"
   [[ -d "${app_dir}" ]] || die "Missing app dir: ${app_dir}"
 
-  log "Starting ${app} on port ${port} via PM2"
-  # Try common start patterns:
-  # 1) yarn start -- -p PORT
-  # 2) yarn start (PORT env)
-  # We use a small wrapper so it works regardless of whether the app uses Next or another server.
+  ws="${WORKSPACE_PREFIX}/${app}"
+
+  log "Starting ${app} on port ${port} via PM2 (workspace ${ws})"
+
   pm2 start bash \
     --name "${PM2_NAMESPACE}:${app}" \
-    --cwd "${app_dir}" \
+    --cwd "${REPO_DIR}" \
     --interpreter bash \
     -- \
-    -lc "export NODE_ENV='${NODE_ENV}'; export PORT='${port}'; if yarn -s run | grep -qE '^  start$'; then yarn start -- -p '${port}' || yarn start; else node -e \"console.error('No start script in package.json'); process.exit(1)\"; fi
+    -lc "export NODE_ENV='${NODE_ENV}'; export PORT='${port}'; yarn workspace '${ws}' run start -- -p '${port}' || yarn workspace '${ws}' run start"
+done
+
+log "Saving PM2 process list (pm2 startup assumed already configured)"
+pm2 save
+
+log "Done. Current PM2 status:"
+pm2 ls
